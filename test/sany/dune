@@ -1,0 +1,7 @@
+(test
+ (name sany_translation_tests)
+ (modes exe)
+ (libraries tlapm_lib xmlm)
+ (deps AddTwo.xml AddTwo.tla)
+ (preprocess (pps ppx_deriving.show))
+)

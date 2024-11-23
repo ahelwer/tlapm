@@ -38,6 +38,7 @@ depends: [
   "ppx_assert"
   "ppx_deriving"
   "ounit2"
+  "xmlm"
   "odoc" {with-doc}
 ]
 depopts: ["lsp" "eio_main"]
