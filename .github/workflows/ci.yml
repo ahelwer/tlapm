@@ -3,10 +3,14 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, rolling-prerelease]
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+env:
+  ROLLING_PRERELEASE_VERSION: "1.6.0"
+  GITHUB_ROLLING_PRERELEASE_NAME: "Version 1.6.0 rolling pre-release"
 jobs:
     test:
         name: Build & Test
@@ -14,19 +18,23 @@ jobs:
         strategy:
           fail-fast: false
           matrix:
-            os:
-              - ubuntu-latest
-              - macos-13
-              - macos-14
-            ocaml-compiler:
-              - '4.14.1'
-              - '5.1.0'
+            os: [ubuntu-latest, macos-latest]
+            ocaml-compiler: ['4.14.1', '5.1.0']
+            include:
+            - os: ubuntu-latest
+              TLAPM_ZIP: tlaps-1.6.0-x86_64-linux-gnu.tar.gz
+            - os: macos-latest
+              TLAPM_ZIP: tlaps-1.6.0-arm64-darwin.tar.gz
         env:
           EXAMPLES_DIR: "tlaplus-examples"
           SCRIPT_DIR: "tlaplus-examples/.github/scripts"
           DEPS_DIR: "tlaplus-examples/deps"
           DIST_DIR: "tlatools/org.lamport.tlatools/dist"
         steps:
+            - name: asdf
+              run: |
+                echo ${{ github.ref_name }}
+                echo ${{ matrix.ocaml-compiler }}
             - name: Clone repo
               uses: actions/checkout@v4
             - name: Install deps (ubuntu)
@@ -57,11 +65,22 @@ jobs:
                   rm -rf _build
                   make
                   if [ $? -eq 0 ]; then
-                    make release
+                    make release RELEASE_VERSION=${{ env.ROLLING_PRERELEASE_VERSION }}
                     exit $?
                   fi
                 done
                 exit 1
+            - name: "Upload release"
+              if: github.ref_name == 'rolling-prerelease' && matrix.ocaml-compiler == '5.1.0'
+              run: |
+                ## Adapted from https://github.com/tlaplus/tlaplus repository
+                ## Crawl release id
+                DRAFT_RELEASE=$(curl -sS -H "Authorization: token ${{secrets.TLAPM_RELEASES_AT}}" https://api.github.com/repos/${{ github.repository }}/releases --header "Content-Type: application/json" | jq '.[]| select(.name=="${{ env.GITHUB_ROLLING_PRERELEASE_NAME }}") | .id')
+
+                ## Delete old assets and upload replacement assets (if delete fails we still try to upload the new asset)
+                ID=$(curl -sS -H "Authorization: token ${{secrets.TLAPM_RELEASES_AT}}" https://api.github.com/repos/${{ github.repository }}/releases/$DRAFT_RELEASE/assets --header "Content-Type: application/json"  | jq '.[]| select(.name == "${{ matrix.TLAPM_ZIP }}") | .id')
+                curl -sS -X DELETE -H "Authorization: token ${{secrets.TLAPM_RELEASES_AT}}" https://api.github.com/repos/${{ github.repository }}/releases/assets/$ID
+                curl -s -X POST -H "Content-Type: application/zip" -H "Authorization: token ${{secrets.TLAPM_RELEASES_AT}}" https://uploads.github.com/repos/${{ github.repository }}/releases/$DRAFT_RELEASE/assets?name=${{ matrix.TLAPM_ZIP }} --upload-file _build/${{ matrix.TLAPM_ZIP }}
             - name: Run tests
               run: |
                 eval $(opam env)
@@ -108,4 +127,3 @@ jobs:
                   --tlapm_path "$DEPS_DIR/tlapm-install"        \
                   --manifest_path "$EXAMPLES_DIR/manifest.json" \
                   --skip "${SKIP[@]}"
-
